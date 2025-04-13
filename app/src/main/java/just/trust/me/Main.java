@@ -2,11 +2,12 @@ package just.trust.me;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.net.http.SslError;
 import android.net.http.X509TrustManagerExtensions;
 import android.os.Build;
+import android.util.JsonWriter;
 import android.util.Log;
-import android.util.Pair;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebView;
 
@@ -20,8 +21,11 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.conn.SingleClientConnManager;
 import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
 import org.apache.http.params.HttpParams;
+import org.json.JSONObject;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.Proxy;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.security.KeyManagementException;
@@ -218,6 +222,7 @@ public class Main implements IXposedHookLoadPackage {
                 WebView.class, SslErrorHandler.class, SslError.class, new XC_MethodReplacement() {
                     @Override
                     protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                        Log.d(TAG, "onReceivedSslError ignore:" + ((WebView)param.args[0]).getUrl());
                         ((android.webkit.SslErrorHandler) param.args[1]).proceed();
                         return null;
                     }
@@ -225,10 +230,17 @@ public class Main implements IXposedHookLoadPackage {
 
         /* frameworks/base/core/java/android/webkit/WebViewClient.java */
         /* public void onReceivedError(WebView, int, String, String) */
-        Log.d(TAG, "Hooking WebViewClient.onReceivedSslError(WebView, int, string, string) for: " + currentPackageName);
+        Log.d(TAG, "Hooking WebViewClient.onReceivedError(WebView, int, string, string) for: " + currentPackageName);
 
         findAndHookMethod("android.webkit.WebViewClient", lpparam.classLoader, "onReceivedError",
-                WebView.class, int.class, String.class, String.class, DO_NOTHING);
+                WebView.class, int.class, String.class, String.class, new XC_MethodReplacement() {
+                    @Override
+                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                        Log.d(TAG, "onReceivedError ignore:" + ((WebView)param.args[0]).getUrl());
+                        ((android.webkit.SslErrorHandler) param.args[1]).proceed();
+                        return null;
+                    }
+                });
 
         //SSLContext.init >> (null,ImSureItsLegitTrustManager,null)
         findAndHookMethod("javax.net.ssl.SSLContext", lpparam.classLoader, "init", KeyManager[].class, TrustManager[].class, SecureRandom.class, new XC_MethodHook() {
@@ -256,6 +268,8 @@ public class Main implements IXposedHookLoadPackage {
                         processOkHttp(context.getClassLoader());
                         processHttpClientAndroidLib(context.getClassLoader());
                         processXutils(context.getClassLoader());
+                        processEnableDebug(context.getClassLoader());
+
                     }
                 }
         );
@@ -553,6 +567,23 @@ public class Main implements IXposedHookLoadPackage {
             // pass
         }
 
+        try {
+            classLoader.loadClass("com.hn.library.okgocallback.JsonCallback");
+            classLoader.loadClass("com.lzy.okgo.request.base.Request");
+            Class requestClass = Class.forName("com.lzy.okgo.request.base.Request");
+            findAndHookMethod("com.hn.library.okgocallback.JsonCallback",
+                    classLoader,
+                    "onStart",
+                    requestClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+                        }
+                    });
+        }catch (Exception e){
+
+        }
+
     }
 
     void processHttpClientAndroidLib(ClassLoader classLoader) {
@@ -672,6 +703,8 @@ public class Main implements IXposedHookLoadPackage {
 
         @Override
         public Socket createSocket(Socket socket, String host, int port, boolean autoClose) throws IOException, UnknownHostException {
+            Log.d(TAG, "Hooking createSocket for: " + host + ":" + port);
+
             return sslContext.getSocketFactory().createSocket(socket, host, port, autoClose);
         }
 
@@ -679,5 +712,20 @@ public class Main implements IXposedHookLoadPackage {
         public Socket createSocket() throws IOException {
             return sslContext.getSocketFactory().createSocket();
         }
+    }
+
+    public void processEnableDebug(ClassLoader classLoader){
+        //com.yuyin.live.biz.HnNuggetBiz#getNuggetRewardLog
+        try {
+            classLoader.loadClass("com.yuyin.live.biz.HnNuggetBiz");
+            findAndHookMethod("com.yuyin.live.biz.HnNuggetBiz", classLoader, "getNuggetRewardLog", new XC_MethodHook() {
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Log.d(TAG, "HnEggBiz#getEggsRankNotify");
+                }
+            });
+        } catch (ClassNotFoundException e) {
+
+        }
+
     }
 }
