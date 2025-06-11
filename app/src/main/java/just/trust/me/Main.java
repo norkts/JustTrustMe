@@ -1,12 +1,21 @@
 package just.trust.me;
 
+import static de.robv.android.xposed.XC_MethodReplacement.DO_NOTHING;
+import static de.robv.android.xposed.XposedHelpers.callMethod;
+import static de.robv.android.xposed.XposedHelpers.callStaticMethod;
+import static de.robv.android.xposed.XposedHelpers.findAndHookConstructor;
+import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
+import static de.robv.android.xposed.XposedHelpers.findClass;
+import static de.robv.android.xposed.XposedHelpers.getObjectField;
+import static de.robv.android.xposed.XposedHelpers.newInstance;
+import static de.robv.android.xposed.XposedHelpers.setObjectField;
+
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
 import android.net.http.SslError;
 import android.net.http.X509TrustManagerExtensions;
 import android.os.Build;
-import android.util.JsonWriter;
 import android.util.Log;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebView;
@@ -21,11 +30,9 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.conn.SingleClientConnManager;
 import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
 import org.apache.http.params.HttpParams;
-import org.json.JSONObject;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.net.Proxy;
+import java.lang.reflect.Method;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.security.KeyManagementException;
@@ -37,6 +44,7 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.net.ssl.HostnameVerifier;
@@ -52,18 +60,9 @@ import javax.net.ssl.X509TrustManager;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
-
-import static de.robv.android.xposed.XC_MethodReplacement.DO_NOTHING;
-import static de.robv.android.xposed.XposedHelpers.callMethod;
-import static de.robv.android.xposed.XposedHelpers.callStaticMethod;
-import static de.robv.android.xposed.XposedHelpers.findAndHookConstructor;
-import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
-import static de.robv.android.xposed.XposedHelpers.findClass;
-import static de.robv.android.xposed.XposedHelpers.getObjectField;
-import static de.robv.android.xposed.XposedHelpers.newInstance;
-import static de.robv.android.xposed.XposedHelpers.setObjectField;
 
 public class Main implements IXposedHookLoadPackage {
 
@@ -73,8 +72,7 @@ public class Main implements IXposedHookLoadPackage {
     public void handleLoadPackage(final LoadPackageParam lpparam) throws Throwable {
 
         currentPackageName = lpparam.packageName;
-
-
+//        FlutterSSLHook.init();
 
         /* Apache Hooks */
         /* external/apache-http/src/org/apache/http/impl/client/DefaultHttpClient.java */
@@ -117,12 +115,14 @@ public class Main implements IXposedHookLoadPackage {
             });
         }
 
-        findAndHookMethod(X509TrustManagerExtensions.class, "checkServerTrusted", X509Certificate[].class, String.class, String.class, new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                return param.args[0];
-            }
-        });
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            findAndHookMethod(X509TrustManagerExtensions.class, "checkServerTrusted", X509Certificate[].class, String.class, String.class, new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                    return param.args[0];
+                }
+            });
+        }
 
         findAndHookMethod("android.security.net.config.NetworkSecurityTrustManager", lpparam.classLoader, "checkPins", List.class, DO_NOTHING);
 
@@ -219,12 +219,13 @@ public class Main implements IXposedHookLoadPackage {
         Log.d(TAG, "Hooking WebViewClient.onReceivedSslError(WebView, SslErrorHandler, SslError) for: " + currentPackageName);
 
         findAndHookMethod("android.webkit.WebViewClient", lpparam.classLoader, "onReceivedSslError",
-                WebView.class, SslErrorHandler.class, SslError.class, new XC_MethodReplacement() {
+                WebView.class, SslErrorHandler.class, SslError.class, new XC_MethodHook() {
                     @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         Log.d(TAG, "onReceivedSslError ignore:" + ((WebView)param.args[0]).getUrl());
-                        ((android.webkit.SslErrorHandler) param.args[1]).proceed();
-                        return null;
+                        ((SslErrorHandler) param.args[1]).proceed();
+                        param.setResult(null);
+
                     }
                 });
 
@@ -233,12 +234,11 @@ public class Main implements IXposedHookLoadPackage {
         Log.d(TAG, "Hooking WebViewClient.onReceivedError(WebView, int, string, string) for: " + currentPackageName);
 
         findAndHookMethod("android.webkit.WebViewClient", lpparam.classLoader, "onReceivedError",
-                WebView.class, int.class, String.class, String.class, new XC_MethodReplacement() {
+                WebView.class, int.class, String.class, String.class, new XC_MethodHook() {
                     @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         Log.d(TAG, "onReceivedError ignore:" + ((WebView)param.args[0]).getUrl());
-                        ((android.webkit.SslErrorHandler) param.args[1]).proceed();
-                        return null;
+                        param.setResult(null);
                     }
                 });
 
@@ -301,7 +301,6 @@ public class Main implements IXposedHookLoadPackage {
                             return list;
                         }
                     });
-
 
             /* public List<X509Certificate> checkServerTrusted(X509Certificate[] chain,
                                     String authType, SSLSession session) throws CertificateException */
@@ -638,6 +637,14 @@ public class Main implements IXposedHookLoadPackage {
         public X509Certificate[] getAcceptedIssuers() {
             return new X509Certificate[0];
         }
+
+        @SuppressLint("NewApi")
+        public List<X509Certificate> checkServerTrusted(X509Certificate[] chain,
+                                                        String authType,
+                                                        String hostname,
+                                                        String algorithm) {
+            return Arrays.asList(chain); // 直接信任所有证书
+        }
     }
 
     private class ImSureItsLegitTrustManager implements X509TrustManager {
@@ -649,9 +656,15 @@ public class Main implements IXposedHookLoadPackage {
         public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
         }
 
-        public List<X509Certificate> checkServerTrusted(X509Certificate[] chain, String authType, String host) throws CertificateException {
-            ArrayList<X509Certificate> list = new ArrayList<X509Certificate>();
-            return list;
+        public void checkServerTrusted(X509Certificate[] chain, String authType, String host) throws CertificateException {
+        }
+
+        @SuppressLint("NewApi")
+        public List<X509Certificate> checkServerTrusted(X509Certificate[] chain,
+                                                        String authType,
+                                                        String hostname,
+                                                        String algorithm) {
+            return Arrays.asList(chain); // 直接信任所有证书
         }
 
         @Override
@@ -717,14 +730,57 @@ public class Main implements IXposedHookLoadPackage {
     public void processEnableDebug(ClassLoader classLoader){
         //com.yuyin.live.biz.HnNuggetBiz#getNuggetRewardLog
         try {
-            classLoader.loadClass("com.yuyin.live.biz.HnNuggetBiz");
-            findAndHookMethod("com.yuyin.live.biz.HnNuggetBiz", classLoader, "getNuggetRewardLog", new XC_MethodHook() {
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    Log.d(TAG, "HnEggBiz#getEggsRankNotify");
+            classLoader.loadClass("com.kiwi.sdk.Kiwi");
+//            findAndHookMethod("com.kiwi.sdk.Kiwi", classLoader, "Init", String.class, new XC_MethodReplacement() {
+//                @Override
+//                protected Object replaceHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+//                    Log.i(TAG, "Hooking Kiwi.Init");
+//                    return -1;
+//                }
+//            });
+
+            findAndHookMethod("com.kiwi.sdk.Kiwi", classLoader, "server_to_local", String.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+                    Log.i(TAG, "server_to_local:" + methodHookParam.getResult());
                 }
             });
-        } catch (ClassNotFoundException e) {
 
+
+        } catch (Exception e) {
+
+        }
+
+        try {
+            classLoader.loadClass("imechos.com.base.utils.PackageUtil");
+            findAndHookMethod("imechos.com.base.utils.PackageUtil", classLoader, "hasProxy",Context.class, new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+                    Log.i(TAG, "PackageUtil#hasProxy");
+                    return false;
+                }
+            });
+        } catch (Exception e) {
+
+        }
+
+        try {
+            Log.i(TAG, " hooking dev.fluttercommunity.plus.connectivity.OooO00o#OooO0O0");
+            Class clazz = classLoader.loadClass("dev.fluttercommunity.plus.connectivity.OooO00o");
+
+            findAndHookMethod("dev.fluttercommunity.plus.connectivity.OooO00o", classLoader, "OooO0O0", new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+                    Log.i(TAG, "PackageUtil#hasProxy");
+                    return "wifi";
+                }
+            });
+
+
+
+
+        } catch (Exception e) {
+            Log.e(TAG, "RongChatRoomClientImpl#joinChatRoom error", e);
         }
 
     }
