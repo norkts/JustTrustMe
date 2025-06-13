@@ -765,6 +765,19 @@ public class Main implements IXposedHookLoadPackage {
         }
 
         try {
+            classLoader.loadClass("imechos.com.base.utils.VpnUtils");
+            findAndHookMethod("imechos.com.base.utils.VpnUtils", classLoader, "hasProxy",Context.class, new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam methodHookParam) throws Throwable {
+                    Log.i(TAG, "VpnUtils#hasProxy");
+                    return false;
+                }
+            });
+        } catch (Exception e) {
+
+        }
+
+        try {
             Log.i(TAG, " hooking dev.fluttercommunity.plus.connectivity.OooO00o#OooO0O0");
             Class clazz = classLoader.loadClass("dev.fluttercommunity.plus.connectivity.OooO00o");
 
